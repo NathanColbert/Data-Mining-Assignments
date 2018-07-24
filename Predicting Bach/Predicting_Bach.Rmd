@@ -1,0 +1,201 @@
+---
+title: "Data Mining Project"
+author: "Nathan Colbert"
+date: "12/11/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(randomForest)
+library(tree)
+library(bartMachine)
+library(gbm)
+library(nnet)
+library(ggplot2)
+library(dplyr)
+library(caret)
+set.seed(1324354657)
+```
+
+#Comparing Different Methods for Predicting Bass Pitch in Bach Chorales
+
+
+I compared the effeciency of predicting bass pitch in 60 Bach chorales using four popular data mining techniques: random forest, boosting, bartMachine, and a neural network. 
+
+#Preparing the data
+
+This dataset is available through R studio. It has midi information on 60 Bach chorales including pitch, chord, bass pitch and meter all indexed by event number (the order in which they occured). I specifically chose to predict bass pitch as a beginning step towards predicting overall harmony. Bass pitch only has 16 options in western music, A, A#/Bb, B, C, C#/Db, D, D#/Eb, E, F, F#/Gb, G, and G#/Ab, whereas chord options are much more vast, making them difficult to classify without some type of normalizing or filtering. This dataset has 102 different chords in it. It is important to note that pitch names with a slash in between them are called enharmonics. This simply means that they are sound the same pitch, but have different names based on the harmonic structure at the time of their usage. These pitches are separated chromatically (by a half step) and sonically lie half way in between the non slashed pitches that surrounded them. It is also important to note that their are no enharmonic pitches between B and C, and E and F. This is because these pitches are separated chromatically already and thus are not divided further in western harmony. For this reason, B# would sound the same as C and Cb would sound the same as B. Although typically these pitches would be numbered 1 - 12 (only counting enharmonics once), in this data set these pitches are numbered from 1-16 double counting enharmonic pitches. This is because we are predicting based on a pitches name and occurence, not its sound. Also, because this data has been converted from midi data, it can easily be converted from words back to numbers. I converted this data set back to a numeric structure before beginning prediction. 
+
+A musical key is a the harmonic center of a piece. I believe knowing the key will improve prediction accuracy a great deal and so I will create a new variable called "key." In this era of Bach's music, more specifically his chorales, the key can most easily be found by locating the most frequently used chord in a chorale. In order to establish a key for a given chorale, I took the mode of all the chords used in a given chorale. I also created a lag variable for each of the four lags preceding a given musical event. Given that musical harmony moves moves in a canonical pattern, lags of chords should theoretically be helpful in predicting what comes next. Data tables will be provided in the appendix showing the relationship between keys, chords, pitches, and their numerical counterparts.
+
+```{r}
+bach_data <- read.delim("/Users/nathancolbert/Downloads/jsbach_chorals_harmony/jsbach_chorals_harmony.data",
+                        sep = ",", header = FALSE)
+
+colnames(bach_data) <- c("Chorale", "Event_Number", "C", "C#/Db", "D","D#/Eb", "E", "F",
+                         "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B", "Bass_Pitch", "Meter", "Chord")
+
+bach_data$Chorale <- as.numeric(bach_data$Chorale) - 2
+
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+bach_data <- bach_data %>% group_by(Chorale) %>% mutate(Lag1 = lag(Chord),
+                                                        Lag2 = lag(Chord, n = 2L),
+                                                        Lag3 = lag(Chord, n = 3L),
+                                                        Lag4 = lag(Chord, n = 4L),
+                                                        Key = Mode(Chord),
+                                                        Chord_num = as.numeric(Chord),
+                                                        Lag1_num = as.numeric(Lag1),
+                                                        Lag2_num = as.numeric(Lag2),
+                                                        Lag3_num = as.numeric(Lag3),
+                                                        Lag4_num = as.numeric(Lag4),
+                                                        Key_num = as.numeric(Key),
+                                                        Bass_Pitch_num = as.numeric(Bass_Pitch))
+
+
+```
+
+#Importance of Key as a predictor
+
+Below, it is shown that simply knowing the key of a chorale and guessing based only on that information, one would still get correct prediction almost 1/4 of the time. This is clearly a helpful predictor and has been added for this reason.
+```{r}
+sub1 <- bach_data$Chorale == 1
+
+bach_1 <- bach_data[sub1,]
+
+sum(bach_1$Bass_Pitch_num == 13) / max(bach_1["Event_Number"])
+```
+
+
+#Why Chord name isn't always a perfect predictor
+
+One might first think that the name of a chord should be a perfect predictor of bass pitch. However, even though the harmonic fundamental of a chord is a given note, that note is not required to be the lowest (bass) pitch in the chord. In music theory this is called an inversion. Looking at the plot of the first chorale below, it is easy to see that the same chord has different bass pitches. Although there is a clear correlation between chord name and bass pitch being the same, their is also a corellation between the chord and bass pitches of a different name. This is because certain notes are more likely than others to exist in the bass of a given chord. Specifically the 3rd and 5th degree of a given chord. 
+
+```{r}
+bach_plot <- ggplot(aes(x = as.numeric(Event_Number),
+                        y = as.factor(Chord)), data = bach_data[sub1,])
+
+bach_plot <- bach_plot + geom_point(aes(color = Bass_Pitch))
+
+bach_plot 
+
+```
+
+# Predicting Bass Pitch
+
+##Partition data set
+
+The data set is partitioned and all non-numeric observations are removed.
+
+```{r}
+train <- createDataPartition(bach_data$Bass_Pitch_num, p = 3/4, list = FALSE)
+
+training <- bach_data[train,]
+
+training <- training[, -(2:22)]
+
+training <- na.omit(training)
+
+testing <- bach_data[-train,]
+
+testing <- testing[, -(2:22)]
+
+testing <- na.omit(testing)
+```
+
+##With randomForest
+
+```{r}
+bach_rf <- randomForest(Bass_Pitch_num ~ . , data = training, ntree = 1000)
+
+bach_rf2 <- predict(bach_rf, newdata = testing)
+
+rf_MSE <- mean((testing$Bass_Pitch_num - bach_rf2) ^ 2)
+
+rf_MSE
+```
+
+##With gbm
+
+```{r}
+bach_gbm <- gbm(Bass_Pitch_num ~ . , data = training, n.trees = 10000)
+
+gbm_MSE <- mean((testing$Bass_Pitch_num - predict(bach_gbm, newdata = testing, n.trees = 10000)) ^ 2)
+
+gbm_MSE
+```
+
+##With bartMachine
+
+```{r}
+X <- as.data.frame(training[, -8])
+
+test_X <- as.data.frame(testing[, -8])
+
+y <- training$Bass_Pitch_num
+
+set_bart_machine_num_cores(parallel::detectCores())
+
+bart <- bartMachine(X = X, y = y, num_trees = 100, use_missing_data = TRUE,
+                    use_missing_data_dummies_as_covars = TRUE,
+                    mem_cache_for_speed = FALSE)
+
+bart_MSE <- mean((testing$Bass_Pitch_num - predict(bart, new_data = test_X )) ^ 2)
+
+bart_MSE
+```
+
+
+##With nnet
+
+```{r}
+net <- nnet(Bass_Pitch_num ~ ., data = training, size = 15,
+            MaxNWt = 5000)
+
+net_MSE <- mean((testing$Bass_Pitch_num - predict(net, newdata = testing)) ^ 2)
+
+net_MSE
+```
+
+#Conclusion
+
+```{r}
+c(bart_MSE, rf_MSE, gbm_MSE, net_MSE)
+```
+Looking at the mean square errors above, it is clear that in this instance random forest performs the best in the testing data at predicting bass pitch in the 60 bach chorales.
+
+
+#Appendix
+
+##Chords and corresponding numbers
+
+```{r}
+chord_num_rel <- bach_data %>% group_by(Chord) %>% 
+  distinct(Chord, Chord_num) %>% arrange(-desc(Chord_num))
+
+as.data.frame(chord_num_rel)
+```
+
+
+##Bass pitch and corresponding numbers
+
+```{r}
+bass_num_rel <- bach_data %>% group_by(Bass_Pitch) %>% 
+  distinct(Bass_Pitch, Bass_Pitch_num) %>% 
+  arrange(-desc(Bass_Pitch_num))
+
+as.data.frame(bass_num_rel)
+```
+
+##Chorales arranged by corresponding key
+
+```{r}
+chorales_by_key <-bach_data %>% group_by(Chorale) %>% 
+  distinct(Key_num, Key) %>% arrange(desc(Key_num))
+
+as.data.frame(chorales_by_key)
+```

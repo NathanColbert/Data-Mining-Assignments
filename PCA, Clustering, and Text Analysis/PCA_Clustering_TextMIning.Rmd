@@ -1,0 +1,90 @@
+---
+title: "DM_Assignment3"
+author: "Nathan Colbert"
+date: "10/21/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(pcaPP)
+library(tm)
+library(Matrix)
+library(SnowballC)
+library(topicmodels)
+```
+# Principal Component Analysis
+
+
+
+```{r}
+X <- as.matrix(read.csv("dataset3.csv"))
+z <- scale(X)
+SVD <- svd(z)
+sdev <- SVD$d/(3) #sqrt(N - 1) == sqrt(9) == 3
+sdev
+
+pr_var <- sdev^2
+pve <- pr_var/sum(pr_var)
+pve
+plot(cumsum(pve), type = "b")
+sum(pve[1:7])
+
+# D. 7
+
+K <- 7
+Y <- SVD$u[,1:7] %*% diag(sdev[1:7])
+
+ggplot(as.tibble(Y), aes(x = Y[,1], y = Y[,2])) + geom_point()
+
+Robust <- PCAproj(X, k = 2, scale = sd)
+
+biplot(Robust)
+
+# G. Both plots look very similar with the slight adjustment of the biplot appearing to be a rotated version of the ggplot scatterplot. 
+
+```
+
+# Clustering
+
+```{r}
+clust <- hclust(dist(X), method = "average")
+plot(clust)
+
+cutree(clust, 3)
+
+```
+
+After examining the cluster dendrogram I decided to cut the data into 3 clusters. Although it seemed that there was going to be one cluster that was exceptionally larger than the rest, there seemed to be two other, although small, groups that were joined at greater heights. 
+
+
+# Text Mining
+```{r}
+dir("Speeches_May_1967")
+corpus_raw <- Corpus(DirSource(directory = "Speeches_May_1967", pattern = "sp")) 
+corpus_raw
+
+speeches <- tm_map(corpus_raw, content_transformer(tolower))
+speeches <- tm_map(speeches, stripWhitespace)
+speeches <- tm_map(speeches, removePunctuation)
+speeches <- tm_map(speeches, removeNumbers)
+speeches <- tm_map(speeches, removeWords, stopwords("english"))
+speeches <- tm_map(speeches, stemDocument)
+
+speeches
+
+dtm <- DocumentTermMatrix(speeches)
+
+dtm_mat <- as.matrix(dtm)
+
+output <- LDA(weightTf(dtm), k = 3, output = set.seed(123))
+
+round((posterior(output, dtm)$topics), digits = 3)
+
+
+
+```
+
+After reading a few key articles I have ascertained that the three clusters loosely consist of the following topics: cluster 1 - agriculture, natural wonders, nature etc, cluster 2 - military, cluster 3- economic development programs. 
